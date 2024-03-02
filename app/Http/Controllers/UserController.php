@@ -4,105 +4,193 @@ namespace App\Http\Controllers;
 
 use App\Helper\JWTToken;
 use App\Mail\OTPMail;
-use Illuminate\Http\Request;
 use App\Models\User;
 use Exception;
-use PhpParser\Node\Stmt\TryCatch;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\View\View;
 
 class UserController extends Controller
 {
-    function UserReg(Request $req){
+    function LoginPage(): View
+    {
+        return view('auth.login-form');
+    }
 
+    function RegistrationPage(): View
+    {
+        return view('auth.registration-form');
+    }
+    function SendOtpPage(): View
+    {
+        return view('auth.send-otp-form');
+    }
+    function VerifyOTPPage(): View
+    {
+        return view('auth.verify-otp-form');
+    }
+
+    function ResetPasswordPage(): View
+    {
+        return view('auth.reset-pass-form');
+    }
+    function ProfilePage(): View
+    {
+        return view('dashboard.pages.profile');
+    }
+
+
+    function UserRegistration(Request $request)
+    {
         try {
             User::create([
-                'firstName' => $req->input('firstName'),
-                'lastName' => $req->input('lastName'),
-                'email' => $req->input('email'),
-                'mobile' => $req->input('mobile'),
-                'password' => $req->input('password'),
+                'firstName' => $request->input('firstName'),
+                'lastName' => $request->input('lastName'),
+                'email' => $request->input('email'),
+                'mobile' => $request->input('mobile'),
+                'password' => $request->input('password'),
             ]);
             return response()->json([
                 'status' => 'success',
-                'massage' => 'User Registraion successfully'
-            ]);
+                'message' => 'User Registration Successfully'
+            ], 200);
         } catch (Exception $e) {
             return response()->json([
-                'status' => 'Failed',
-                'massage' => 'User Registraion Failed'
-                //'massage' => $e->getMessage(), //for check error message
-            ]);
+                'status' => 'failed',
+                'message' => 'User Registration Failed'
+            ], 200);
         }
-
-
     }
 
-    function UserLogin(Request $req){
-       $count = User::where('email', '=', $req->input('email'))
-            ->where('password', '=', $req->input('password'))
-            ->count();
+    function UserLogin(Request $request)
+    {
+        $count = User::where('email', '=', $request->input('email'))
+            ->where('password', '=', $request->input('password'))
+            ->select('id')->first();
 
-            if($count == 1){
-                $token = JWTToken::CreateToken($req->input('email'));
-                return response()->json([
-                    'status' => 'success',
-                    'massage' => 'User Login Success',
-                    'Token' => $token
-                ],status: 200);
-            }else{
+        if ($count !== null) {
+            // User Login-> JWT Token Issue
+            $token = JWTToken::CreateToken($request->input('email'), $count->id);
+            return response()->json([
+                'status' => 'success',
+                'message' => 'User Login Successful',
+            ], 200)->cookie('token', $token, time() + 60 * 24 * 30);
+        } else {
             return response()->json([
                 'status' => 'failed',
-                'massage' => 'unauthorized',
-            ]);
-            }
+                'message' => 'unauthorized'
+            ], 200);
+        }
     }
 
-    function SendOTPCode(Request $req){
-        $email = $req->input('email');
-        $otp = rand(1000, 9999);
-        $count = User::where('email','=', $email)->count();
+    function SendOTPCode(Request $request)
+    {
 
-        if($count == 0){
-            // Send OTP
+        $email = $request->input('email');
+        $otp = rand(1000, 9999);
+        $count = User::where('email', '=', $email)->count();
+
+        if ($count == 1) {
+            // OTP Email Address
             Mail::to($email)->send(new OTPMail($otp));
-            // OTP  code update on table
-            User::where('email','=', $email)->update(['otp' => $otp]);
+            // OTO Code Table Update
+            User::where('email', '=', $email)->update(['otp' => $otp]);
 
             return response()->json([
                 'status' => 'success',
-                'massage' => '4 Digits OTP Code Has Been Send Your Email Address',
-                //'massage' => $e->getMessage(), //for check error message
-            ]);
-        }else{
+                'message' => '4 Digit OTP Code has been send to your email !'
+            ], 200);
+        } else {
             return response()->json([
-                'status' => 'Failed',
-                'massage' => 'Unauthorized',
-                //'massage' => $e->getMessage(), //for check error message
+                'status' => 'failed',
+                'message' => 'unauthorized'
             ]);
         }
     }
 
-    function VerifyOTP(Request $req){
-        $email = $req->input('email');
-        $otp = $req->input('otp');
+    function VerifyOTP(Request $request)
+    {
+        $email = $request->input('email');
+        $otp = $request->input('otp');
         $count = User::where('email', '=', $email)
             ->where('otp', '=', $otp)->count();
 
-            if($count == 1){
-            // Database otp update
-            User::where('email', '=', $email)->update(['otp' => 0]);
-            // password token issue
-            $token = JWTToken::CreateTokenForSetPassword($req->input('email'));
+        if ($count == 1) {
+            // Database OTP Update
+            User::where('email', '=', $email)->update(['otp' => '0']);
+
+            // Pass Reset Token Issue
+            $token = JWTToken::CreateTokenForSetPassword($request->input('email'));
             return response()->json([
                 'status' => 'success',
-                'massage' => 'OTP Verification Success',
-                'Token' => $token
-            ], status: 200);
-            }else{
+                'message' => 'OTP Verification Successful',
+            ], 200)->cookie('token', $token, 60 * 24 * 30);
+        } else {
             return response()->json([
-                'status' => 'Failed',
-                'massage' => 'OTP Verify  Failed'
-                //'massage' => $e->getMessage(), //for check error message
+                'status' => 'failed',
+                'message' => 'unauthorized'
+            ], 200);
+        }
+    }
+
+    function ResetPassword(Request $request)
+    {
+        try {
+            $email = $request->header('email');
+            $password = $request->input('password');
+            User::where('email', '=', $email)->update(['password' => $password]);
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Request Successful',
+            ], 200);
+        } catch (Exception $exception) {
+            return response()->json([
+                'status' => 'fail',
+                'message' => 'Something Went Wrong',
+            ], 200);
+        }
+    }
+
+    function UserLogout()
+    {
+        return redirect('/')->cookie('token', '', -1);
+    }
+
+
+    function UserProfile(Request $request)
+    {
+        $email = $request->header('email');
+        $user = User::where('email', '=', $email)->first();
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Request Successful',
+            'data' => $user
+        ], 200);
+    }
+
+    function UpdateProfile(Request $request)
+    {
+        try {
+            $email = $request->header('email');
+            $firstName = $request->input('firstName');
+            $lastName = $request->input('lastName');
+            $mobile = $request->input('mobile');
+            $password = $request->input('password');
+            User::where('email', '=', $email)->update([
+                'firstName' => $firstName,
+                'lastName' => $lastName,
+                'mobile' => $mobile,
+                'password' => $password
             ]);
-            }
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Request Successful',
+            ], 200);
+        } catch (Exception $exception) {
+            return response()->json([
+                'status' => 'fail',
+                'message' => 'Something Went Wrong',
+            ], 200);
+        }
     }
 }
